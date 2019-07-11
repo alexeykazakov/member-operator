@@ -72,7 +72,7 @@ func TestReconcileOK(t *testing.T) {
 
 	// First cycle of reconcile. Freshly created UserAccount.
 	t.Run("create or update user", func(t *testing.T) {
-		reconcile := func(r *ReconcileUserAccount, req reconcile.Request, expectedConditions ...toolchainv1alpha1.Condition) {
+		reconcile := func(r *ReconcileUserAccount, req reconcile.Request) {
 			//when
 			res, err := r.Reconcile(req)
 
@@ -84,7 +84,16 @@ func TestReconcileOK(t *testing.T) {
 			updatedAcc := &toolchainv1alpha1.UserAccount{}
 			err = r.client.Get(context.TODO(), types.NamespacedName{Namespace: req.Namespace, Name: userAcc.Name}, updatedAcc)
 			require.NoError(t, err)
-			test.AssertConditionsMatch(t, updatedAcc.Status.Conditions, expectedConditions...)
+			test.AssertConditionsMatch(t, updatedAcc.Status.Conditions,
+				toolchainv1alpha1.Condition{
+					Type:   toolchainv1alpha1.UserAccountProvisioning,
+					Status: corev1.ConditionTrue,
+				},
+				toolchainv1alpha1.Condition{
+					Type:   toolchainv1alpha1.UserAccountReady,
+					Status: corev1.ConditionFalse,
+					Reason: "Provisioning",
+				})
 
 			// Check the created/updated user
 			user := &userv1.User{}
@@ -106,20 +115,7 @@ func TestReconcileOK(t *testing.T) {
 
 		t.Run("create", func(t *testing.T) {
 			r, req := prepareReconcile(t, username, userAcc)
-			reconcile(r, req,
-				toolchainv1alpha1.Condition{
-					Type:   toolchainv1alpha1.UserAccountProvisioning,
-					Status: corev1.ConditionTrue,
-				},
-				toolchainv1alpha1.Condition{
-					Type:   toolchainv1alpha1.UserAccountUserNotReady,
-					Status: corev1.ConditionFalse,
-				},
-				toolchainv1alpha1.Condition{
-					Type:   toolchainv1alpha1.UserAccountReady,
-					Status: corev1.ConditionFalse,
-					Reason: "Provisioning",
-				})
+			reconcile(r, req)
 		})
 
 		t.Run("update", func(t *testing.T) {
@@ -130,26 +126,13 @@ func TestReconcileOK(t *testing.T) {
 				OwnerReferences: []metav1.OwnerReference{{UID: userAcc.UID}},
 			}}
 			r, req := prepareReconcile(t, username, userAcc, preexistingUserWithNoMapping)
-			reconcile(r, req,
-				toolchainv1alpha1.Condition{
-					Type:   toolchainv1alpha1.UserAccountProvisioning,
-					Status: corev1.ConditionTrue,
-				},
-				toolchainv1alpha1.Condition{
-					Type:   toolchainv1alpha1.UserAccountUserIdentityMappingNotReady,
-					Status: corev1.ConditionFalse,
-				},
-				toolchainv1alpha1.Condition{
-					Type:   toolchainv1alpha1.UserAccountReady,
-					Status: corev1.ConditionFalse,
-					Reason: "Provisioning",
-				})
+			reconcile(r, req)
 		})
 	})
 
 	// Second cycle of reconcile. User already created.
 	t.Run("create or update identity", func(t *testing.T) {
-		reconcile := func(r *ReconcileUserAccount, req reconcile.Request, expectedConditions ...toolchainv1alpha1.Condition) {
+		reconcile := func(r *ReconcileUserAccount, req reconcile.Request) {
 			//when
 			res, err := r.Reconcile(req)
 
@@ -161,7 +144,16 @@ func TestReconcileOK(t *testing.T) {
 			updatedAcc := &toolchainv1alpha1.UserAccount{}
 			err = r.client.Get(context.TODO(), types.NamespacedName{Namespace: req.Namespace, Name: userAcc.Name}, updatedAcc)
 			require.NoError(t, err)
-			test.AssertConditionsMatch(t, updatedAcc.Status.Conditions, expectedConditions...)
+			test.AssertConditionsMatch(t, updatedAcc.Status.Conditions,
+				toolchainv1alpha1.Condition{
+					Type:   toolchainv1alpha1.UserAccountProvisioning,
+					Status: corev1.ConditionTrue,
+				},
+				toolchainv1alpha1.Condition{
+					Type:   toolchainv1alpha1.UserAccountReady,
+					Status: corev1.ConditionFalse,
+					Reason: "Provisioning",
+				})
 
 			// Check the created/updated identity
 			identity := &userv1.Identity{}
@@ -177,20 +169,7 @@ func TestReconcileOK(t *testing.T) {
 
 		t.Run("create", func(t *testing.T) {
 			r, req := prepareReconcile(t, username, userAcc, preexistingUser)
-			reconcile(r, req,
-				toolchainv1alpha1.Condition{
-					Type:   toolchainv1alpha1.UserAccountProvisioning,
-					Status: corev1.ConditionTrue,
-				},
-				toolchainv1alpha1.Condition{
-					Type:   toolchainv1alpha1.UserAccountIdentityNotReady,
-					Status: corev1.ConditionFalse,
-				},
-				toolchainv1alpha1.Condition{
-					Type:   toolchainv1alpha1.UserAccountReady,
-					Status: corev1.ConditionFalse,
-					Reason: "Provisioning",
-				})
+			reconcile(r, req)
 		})
 
 		t.Run("update", func(t *testing.T) {
@@ -202,20 +181,7 @@ func TestReconcileOK(t *testing.T) {
 			}}
 
 			r, req := prepareReconcile(t, username, userAcc, preexistingUser, preexistingIdentityWithNoMapping)
-			reconcile(r, req,
-				toolchainv1alpha1.Condition{
-					Type:   toolchainv1alpha1.UserAccountProvisioning,
-					Status: corev1.ConditionTrue,
-				},
-				toolchainv1alpha1.Condition{
-					Type:   toolchainv1alpha1.UserAccountUserIdentityMappingNotReady,
-					Status: corev1.ConditionFalse,
-				},
-				toolchainv1alpha1.Condition{
-					Type:   toolchainv1alpha1.UserAccountReady,
-					Status: corev1.ConditionFalse,
-					Reason: "Provisioning",
-				})
+			reconcile(r, req)
 		})
 	})
 
@@ -238,22 +204,6 @@ func TestReconcileOK(t *testing.T) {
 		test.AssertConditionsMatch(t, updatedAcc.Status.Conditions,
 			toolchainv1alpha1.Condition{
 				Type:   toolchainv1alpha1.UserAccountProvisioning,
-				Status: corev1.ConditionFalse,
-			},
-			toolchainv1alpha1.Condition{
-				Type:   toolchainv1alpha1.UserAccountUserNotReady,
-				Status: corev1.ConditionFalse,
-			},
-			toolchainv1alpha1.Condition{
-				Type:   toolchainv1alpha1.UserAccountIdentityNotReady,
-				Status: corev1.ConditionFalse,
-			},
-			toolchainv1alpha1.Condition{
-				Type:   toolchainv1alpha1.UserAccountUserIdentityMappingNotReady,
-				Status: corev1.ConditionFalse,
-			},
-			toolchainv1alpha1.Condition{
-				Type:   toolchainv1alpha1.UserAccountNSTemplateSetNotReady,
 				Status: corev1.ConditionFalse,
 			},
 			toolchainv1alpha1.Condition{

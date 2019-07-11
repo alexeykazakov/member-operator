@@ -135,9 +135,6 @@ func (r *ReconcileUserAccount) ensureUser(logger logr.Logger, userAcc *toolchain
 			if err := r.client.Create(context.TODO(), user); err != nil {
 				return nil, false, r.wrapErrorWithStatusUpdate(logger, userAcc, r.setStatusUserCreationFailed, err, "failed to create user '%s'", userAcc.Name)
 			}
-			if err := r.setStatusUserCreationOK(userAcc); err != nil {
-				return nil, false, err
-			}
 			logger.Info("user created successfully", "name", userAcc.Name)
 			return user, true, nil
 		}
@@ -154,9 +151,6 @@ func (r *ReconcileUserAccount) ensureUser(logger logr.Logger, userAcc *toolchain
 		user.Identities = []string{getIdentityName(userAcc)}
 		if err := r.client.Update(context.TODO(), user); err != nil {
 			return nil, false, r.wrapErrorWithStatusUpdate(logger, userAcc, r.setStatusMappingCreationFailed, err, "failed to update user '%s'", userAcc.Name)
-		}
-		if err := r.setStatusMappingCreationOK(userAcc); err != nil {
-			return nil, false, err
 		}
 		logger.Info("user updated successfully", "name", userAcc.Name)
 		return user, true, nil
@@ -180,9 +174,6 @@ func (r *ReconcileUserAccount) ensureIdentity(logger logr.Logger, userAcc *toolc
 			if err := r.client.Create(context.TODO(), identity); err != nil {
 				return nil, false, r.wrapErrorWithStatusUpdate(logger, userAcc, r.setStatusIdentityCreationFailed, err, "failed to create identity '%s'", name)
 			}
-			if err := r.setStatusIdentityCreationOK(userAcc); err != nil {
-				return nil, false, err
-			}
 			logger.Info("identity created successfully", "name", name)
 			return identity, true, nil
 		}
@@ -203,9 +194,6 @@ func (r *ReconcileUserAccount) ensureIdentity(logger logr.Logger, userAcc *toolc
 		if err := r.client.Update(context.TODO(), identity); err != nil {
 			return nil, false, r.wrapErrorWithStatusUpdate(logger, userAcc, r.setStatusMappingCreationFailed, err, "failed to update identity '%s'", name)
 		}
-		if err := r.setStatusMappingCreationOK(userAcc); err != nil {
-			return nil, false, err
-		}
 		logger.Info("identity updated successfully", "name", name)
 		return identity, true, nil
 	}
@@ -225,80 +213,35 @@ func (r *ReconcileUserAccount) wrapErrorWithStatusUpdate(logger logr.Logger, use
 }
 
 func (r *ReconcileUserAccount) setStatusUserCreationFailed(userAcc *toolchainv1alpha1.UserAccount, message string) error {
-	reason := unableToCreateUserReason
 	return r.updateStatusConditions(
 		userAcc,
 		toolchainv1alpha1.Condition{
-			Type:    toolchainv1alpha1.UserAccountUserNotReady,
-			Status:  corev1.ConditionTrue,
-			Reason:  reason,
+			Type:    toolchainv1alpha1.UserAccountReady,
+			Status:  corev1.ConditionFalse,
+			Reason:  unableToCreateUserReason,
 			Message: message,
-		},
-		toolchainv1alpha1.Condition{
-			Type:   toolchainv1alpha1.UserAccountReady,
-			Status: corev1.ConditionFalse,
-			Reason: reason,
 		})
 }
 
 func (r *ReconcileUserAccount) setStatusIdentityCreationFailed(userAcc *toolchainv1alpha1.UserAccount, message string) error {
-	reason := unableToCreateIdentityReason
 	return r.updateStatusConditions(
 		userAcc,
 		toolchainv1alpha1.Condition{
-			Type:    toolchainv1alpha1.UserAccountIdentityNotReady,
-			Status:  corev1.ConditionTrue,
-			Reason:  reason,
+			Type:    toolchainv1alpha1.UserAccountReady,
+			Status:  corev1.ConditionFalse,
+			Reason:  unableToCreateIdentityReason,
 			Message: message,
-		},
-		toolchainv1alpha1.Condition{
-			Type:   toolchainv1alpha1.UserAccountReady,
-			Status: corev1.ConditionFalse,
-			Reason: reason,
 		})
 }
 
 func (r *ReconcileUserAccount) setStatusMappingCreationFailed(userAcc *toolchainv1alpha1.UserAccount, message string) error {
-	reason := unableToCreateMappingReason
 	return r.updateStatusConditions(
 		userAcc,
 		toolchainv1alpha1.Condition{
-			Type:    toolchainv1alpha1.UserAccountUserIdentityMappingNotReady,
-			Status:  corev1.ConditionTrue,
-			Reason:  reason,
+			Type:    toolchainv1alpha1.UserAccountReady,
+			Status:  corev1.ConditionFalse,
+			Reason:  unableToCreateMappingReason,
 			Message: message,
-		},
-		toolchainv1alpha1.Condition{
-			Type:   toolchainv1alpha1.UserAccountReady,
-			Status: corev1.ConditionFalse,
-			Reason: reason,
-		})
-}
-
-func (r *ReconcileUserAccount) setStatusUserCreationOK(userAcc *toolchainv1alpha1.UserAccount) error {
-	return r.updateStatusConditions(
-		userAcc,
-		toolchainv1alpha1.Condition{
-			Type:   toolchainv1alpha1.UserAccountUserNotReady,
-			Status: corev1.ConditionFalse,
-		})
-}
-
-func (r *ReconcileUserAccount) setStatusIdentityCreationOK(userAcc *toolchainv1alpha1.UserAccount) error {
-	return r.updateStatusConditions(
-		userAcc,
-		toolchainv1alpha1.Condition{
-			Type:   toolchainv1alpha1.UserAccountIdentityNotReady,
-			Status: corev1.ConditionFalse,
-		})
-}
-
-func (r *ReconcileUserAccount) setStatusMappingCreationOK(userAcc *toolchainv1alpha1.UserAccount) error {
-	return r.updateStatusConditions(
-		userAcc,
-		toolchainv1alpha1.Condition{
-			Type:   toolchainv1alpha1.UserAccountUserIdentityMappingNotReady,
-			Status: corev1.ConditionFalse,
 		})
 }
 
@@ -321,22 +264,6 @@ func (r *ReconcileUserAccount) setStatusReady(userAcc *toolchainv1alpha1.UserAcc
 		userAcc,
 		toolchainv1alpha1.Condition{
 			Type:   toolchainv1alpha1.UserAccountProvisioning,
-			Status: corev1.ConditionFalse,
-		},
-		toolchainv1alpha1.Condition{
-			Type:   toolchainv1alpha1.UserAccountUserNotReady,
-			Status: corev1.ConditionFalse,
-		},
-		toolchainv1alpha1.Condition{
-			Type:   toolchainv1alpha1.UserAccountIdentityNotReady,
-			Status: corev1.ConditionFalse,
-		},
-		toolchainv1alpha1.Condition{
-			Type:   toolchainv1alpha1.UserAccountUserIdentityMappingNotReady,
-			Status: corev1.ConditionFalse,
-		},
-		toolchainv1alpha1.Condition{
-			Type:   toolchainv1alpha1.UserAccountNSTemplateSetNotReady,
 			Status: corev1.ConditionFalse,
 		},
 		toolchainv1alpha1.Condition{
