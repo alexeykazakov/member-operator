@@ -87,6 +87,15 @@ const (
 
 	// defaultDeployWebhook is true by default
 	defaultDeployWebhook = true
+
+	// varDeployAutoscalingBuffer is to be used to disable or enable cluster autoscaling support by the member operator
+	// If the cluster autoscaling is enabled in the cluster then this property can be set to true.
+	// In this case the member operator will deploy a special buffer app which can reserve compute resources
+	// for user payloads in the cluster.
+	varDeployAutoscalingBuffer = "deploy.buffer"
+
+	// defaultDeployAutoscalingBuffer is false by default
+	defaultDeployAutoscalingBuffer = false
 )
 
 // ToolchainCluster configuration constants
@@ -152,6 +161,7 @@ func (c *Config) setConfigDefaults() {
 	c.member.SetDefault(varCheRouteName, defaultCheRouteName)
 	c.member.SetDefault(varCheKeycloakRouteName, defaultCheKeycloakRouteName)
 	c.member.SetDefault(varDeployWebhook, defaultDeployWebhook)
+	c.member.SetDefault(varDeployAutoscalingBuffer, defaultDeployAutoscalingBuffer)
 }
 
 func (c *Config) Print() {
@@ -252,4 +262,9 @@ func (c *Config) GetMemberOperatorWebhookImage() string {
 // DoDeployWebhook returns true if the Webhook should be deployed
 func (c *Config) DoDeployWebhook() bool {
 	return c.member.GetBool(varDeployWebhook)
+}
+
+// DoDeployAutoscalingBuffer returns true if the autoscaler buffer app should be deployed
+func (c *Config) DoDeployAutoscalingBuffer() bool {
+	return c.member.GetBool(varDeployAutoscalingBuffer)
 }
