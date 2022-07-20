@@ -67,6 +67,7 @@ func printVersion() {
 //+kubebuilder:rbac:groups="",resources=secrets;configmaps;services;services/finalizers;serviceaccounts,verbs=get;list;watch;update;patch;create;delete
 //+kubebuilder:rbac:groups=apps,resources=deployments;deployments/finalizers;replicasets,verbs=get;list;watch;update;patch;create;delete
 //+kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;update;patch;create;delete
+//+kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
 
 func main() {
 	var metricsAddr string
