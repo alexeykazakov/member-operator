@@ -83,7 +83,7 @@ func TestNextNamespaceToProvisionOrUpdate(t *testing.T) {
 		delete(userNamespaces[1].Labels, toolchainv1alpha1.TemplateRefLabelKey)
 
 		// when
-		tierTemplate, userNS, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, tierTemplates, userNamespaces, nsTmplSet)
+		tierTemplate, userNS, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, nsTmplSet, tierTemplates, userNamespaces)
 
 		// then
 		require.NoError(t, err)
@@ -98,7 +98,7 @@ func TestNextNamespaceToProvisionOrUpdate(t *testing.T) {
 		userNamespaces[1].Labels[toolchainv1alpha1.TemplateRefLabelKey] = "basic-stage-123"
 
 		// when
-		tierTemplate, userNS, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, tierTemplates, userNamespaces, nsTmplSet)
+		tierTemplate, userNS, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, nsTmplSet, tierTemplates, userNamespaces)
 
 		// then
 		require.NoError(t, err)
@@ -113,7 +113,7 @@ func TestNextNamespaceToProvisionOrUpdate(t *testing.T) {
 		userNamespaces[0].Labels[toolchainv1alpha1.TierLabelKey] = "advanced"
 
 		// when
-		tierTemplate, userNS, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, tierTemplates, userNamespaces, nsTmplSet)
+		tierTemplate, userNS, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, nsTmplSet, tierTemplates, userNamespaces)
 
 		// then
 		require.NoError(t, err)
@@ -128,7 +128,7 @@ func TestNextNamespaceToProvisionOrUpdate(t *testing.T) {
 		userNamespaces[1].Labels[toolchainv1alpha1.TemplateRefLabelKey] = "outdated"
 
 		// when
-		tierTemplate, userNS, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, tierTemplates, userNamespaces, nsTmplSet)
+		tierTemplate, userNS, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, nsTmplSet, tierTemplates, userNamespaces)
 
 		// then
 		require.NoError(t, err)
@@ -145,7 +145,7 @@ func TestNextNamespaceToProvisionOrUpdate(t *testing.T) {
 		userNamespaces[1].Labels[toolchainv1alpha1.TemplateRefLabelKey] = "basic-stage-abcde21"
 
 		// when
-		tierTemplate, userNS, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, tierTemplates, userNamespaces, nsTmplSet)
+		tierTemplate, userNS, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, nsTmplSet, tierTemplates, userNamespaces)
 
 		// then
 		require.NoError(t, err)
@@ -170,7 +170,7 @@ func TestNextNamespaceToProvisionOrUpdate(t *testing.T) {
 		})
 
 		// when
-		_, _, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, tierTemplates, userNamespaces, nsTmplSet)
+		_, _, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, nsTmplSet, tierTemplates, userNamespaces)
 
 		// then
 		require.NoError(t, err)
@@ -187,7 +187,7 @@ func TestNextNamespaceToProvisionOrUpdate(t *testing.T) {
 			return fakeClient.Client.List(ctx, list, opts...)
 		}
 		// when
-		_, _, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, tierTemplates, userNamespaces, nsTmplSet)
+		_, _, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, nsTmplSet, tierTemplates, userNamespaces)
 
 		// then
 		require.Error(t, err, "mock List error")
@@ -204,7 +204,7 @@ func TestNextNamespaceToProvisionOrUpdate(t *testing.T) {
 			return fakeClient.Client.List(ctx, list, opts...)
 		}
 		// when
-		_, _, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, tierTemplates, userNamespaces, nsTmplSet)
+		_, _, found, err := manager.nextNamespaceToProvisionOrUpdate(ctx, nsTmplSet, tierTemplates, userNamespaces)
 
 		// then
 		require.Error(t, err, "mock List error")
@@ -1359,12 +1359,12 @@ func TestDisablingAndEnablingFeatureInNSTemplateSet(t *testing.T) {
 	restore := test.SetEnvVarAndRestore(t, commonconfig.WatchNamespaceEnvVar, "my-member-operator-namespace")
 	t.Cleanup(restore)
 
-	devNS := newNamespace("advanced", spacename, "dev", withTemplateRefUsingRevision("abcde11"))
-	ro := newRole(devNS.Name, "exec-pods", spacename)
-	rb := newRoleBinding(devNS.Name, "crtadmin-pods", spacename)
-	rb2 := newRoleBinding(devNS.Name, "crtadmin-view", spacename)
+	ro := newRole(fmt.Sprintf("%s-dev", spacename), "exec-pods", spacename)
+	rb := newRoleBinding(fmt.Sprintf("%s-dev", spacename), "crtadmin-pods", spacename)
+	rb2 := newRoleBinding(fmt.Sprintf("%s-dev", spacename), "crtadmin-view", spacename)
 
 	t.Run("disable a feature for already provisioned NSTemplateSet", func(t *testing.T) {
+		devNS := newNamespace("advanced", spacename, "dev", withTemplateRefUsingRevision("abcde11"), withLastAppliedFeaturesAnnotationKey("feature-1-rb"))
 		nsTmplSet := newNSTmplSet(namespaceName, spacename, "advanced", withNamespaces("abcde11", "dev"))
 		featuredRB := newRoleBinding(devNS.Name, "feature-1-rb", spacename) // existing featured RB we need to make sure gets deleted
 		featuredRB.Annotations = map[string]string{
@@ -1382,11 +1382,13 @@ func TestDisablingAndEnablingFeatureInNSTemplateSet(t *testing.T) {
 			HasFinalizer().
 			HasConditions(Updating())
 		AssertThatNamespace(t, spacename+"-dev", cl).
-			HasResource("crtadmin-pods", &rbacv1.RoleBinding{}).
-			HasResource("crtadmin-view", &rbacv1.RoleBinding{}).
+			HasResource(ro.Name, &rbacv1.Role{}).
+			HasResource(rb.Name, &rbacv1.RoleBinding{}).
+			HasResource(rb2.Name, &rbacv1.RoleBinding{}).
 			HasNoResource(featuredRB.Name, &rbacv1.RoleBinding{}) // The featured object is gone
 	})
 	t.Run("enable a feature for already provisioned NSTemplateSet", func(t *testing.T) {
+		devNS := newNamespace("advanced", spacename, "dev", withTemplateRefUsingRevision("abcde11"))
 		nsTmplSet := newNSTmplSet(namespaceName, spacename, "advanced", withNamespaces("abcde11", "dev"), withNSTemplateSetFeatureAnnotation("feature-1"))
 		manager, cl := prepareNamespacesManager(t, nsTmplSet, devNS, ro, rb, rb2)
 
@@ -1400,8 +1402,9 @@ func TestDisablingAndEnablingFeatureInNSTemplateSet(t *testing.T) {
 			HasFinalizer().
 			HasConditions(Updating())
 		AssertThatNamespace(t, spacename+"-dev", cl).
-			HasResource("crtadmin-pods", &rbacv1.RoleBinding{}).
-			HasResource("crtadmin-view", &rbacv1.RoleBinding{}).
+			HasResource(ro.Name, &rbacv1.Role{}).
+			HasResource(rb.Name, &rbacv1.RoleBinding{}).
+			HasResource(rb2.Name, &rbacv1.RoleBinding{}).
 			HasResource("feature-1-rb", &rbacv1.RoleBinding{}) // The featured object is created now
 	})
 }
@@ -1429,7 +1432,7 @@ func TestIsUpToDateAndProvisioned(t *testing.T) {
 		tierTmpl, err := getTierTemplate(ctx, manager.GetHostCluster, "basic-dev-abcde11")
 		require.NoError(t, err)
 		// when
-		isProvisioned, err := manager.isUpToDateAndProvisioned(ctx, &devNS, tierTmpl, nsTmplSet)
+		isProvisioned, err := manager.isUpToDateAndProvisioned(ctx, nsTmplSet, &devNS, tierTmpl)
 		//then
 		require.NoError(t, err)
 		require.False(t, isProvisioned)
@@ -1455,7 +1458,7 @@ func TestIsUpToDateAndProvisioned(t *testing.T) {
 		tierTmpl, err := getTierTemplate(ctx, manager.GetHostCluster, "advanced-dev-abcde11")
 		require.NoError(t, err)
 		//when
-		isProvisioned, err := manager.isUpToDateAndProvisioned(ctx, &devNS, tierTmpl, nsTmplSet)
+		isProvisioned, err := manager.isUpToDateAndProvisioned(ctx, nsTmplSet, &devNS, tierTmpl)
 		//then
 		require.NoError(t, err)
 		require.False(t, isProvisioned)
@@ -1470,7 +1473,7 @@ func TestIsUpToDateAndProvisioned(t *testing.T) {
 		tierTmpl, err := getTierTemplate(ctx, manager.GetHostCluster, "advanced-dev-abcde11")
 		require.NoError(t, err)
 		//when
-		isProvisioned, err := manager.isUpToDateAndProvisioned(ctx, devNS, tierTmpl, nsTmplSet)
+		isProvisioned, err := manager.isUpToDateAndProvisioned(ctx, nsTmplSet, devNS, tierTmpl)
 		//then
 		require.NoError(t, err)
 		require.False(t, isProvisioned)
@@ -1494,7 +1497,7 @@ func TestIsUpToDateAndProvisioned(t *testing.T) {
 		tierTmpl, err := getTierTemplate(ctx, manager.GetHostCluster, "advanced-dev-abcde11")
 		require.NoError(t, err)
 		//when
-		isProvisioned, err := manager.isUpToDateAndProvisioned(ctx, devNS, tierTmpl, nsTmplSet)
+		isProvisioned, err := manager.isUpToDateAndProvisioned(ctx, nsTmplSet, devNS, tierTmpl)
 		//then
 		require.NoError(t, err)
 		require.False(t, isProvisioned)
@@ -1516,7 +1519,7 @@ func TestIsUpToDateAndProvisioned(t *testing.T) {
 		tierTmpl, err := getTierTemplate(ctx, manager.GetHostCluster, "basic-dev-abcde11")
 		require.NoError(t, err)
 		//when
-		isProvisioned, err := manager.isUpToDateAndProvisioned(ctx, devNS, tierTmpl, nsTmplSet)
+		isProvisioned, err := manager.isUpToDateAndProvisioned(ctx, nsTmplSet, devNS, tierTmpl)
 		//then
 		require.NoError(t, err)
 		require.False(t, isProvisioned)
@@ -1530,7 +1533,7 @@ func TestIsUpToDateAndProvisioned(t *testing.T) {
 		tierTmpl, err := getTierTemplate(ctx, manager.GetHostCluster, "basic-dev-abcde11")
 		require.NoError(t, err)
 		//when
-		isProvisioned, err := manager.isUpToDateAndProvisioned(ctx, devNS, tierTmpl, nsTmplSet)
+		isProvisioned, err := manager.isUpToDateAndProvisioned(ctx, nsTmplSet, devNS, tierTmpl)
 		//then
 		require.Error(t, err, "namespace doesn't have space label")
 		require.False(t, isProvisioned)

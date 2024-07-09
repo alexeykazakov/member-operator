@@ -1843,12 +1843,20 @@ func withTemplateRefUsingRevision(revision string) objectMetaOption {
 }
 
 func withLastAppliedSpaceRoles(nsTmplSet *toolchainv1alpha1.NSTemplateSet) objectMetaOption {
+	sr, _ := json.Marshal(nsTmplSet.Spec.SpaceRoles) // assume marshalling always works
+	return withAnnotation(toolchainv1alpha1.LastAppliedSpaceRolesAnnotationKey, string(sr))
+}
+
+func withLastAppliedFeaturesAnnotationKey(features string) objectMetaOption {
+	return withAnnotation(LastAppliedFeaturesAnnotationKey, features)
+}
+
+func withAnnotation(key, value string) objectMetaOption {
 	return func(meta metav1.ObjectMeta, tier, typeName string) metav1.ObjectMeta {
-		sr, _ := json.Marshal(nsTmplSet.Spec.SpaceRoles) // assume marshalling always works
 		if meta.Annotations == nil {
 			meta.Annotations = map[string]string{}
 		}
-		meta.Annotations[toolchainv1alpha1.LastAppliedSpaceRolesAnnotationKey] = string(sr)
+		meta.Annotations[key] = string(value)
 		return meta
 	}
 }

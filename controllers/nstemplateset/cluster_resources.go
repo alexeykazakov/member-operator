@@ -131,7 +131,7 @@ func (r *clusterResourcesManager) ensure(ctx context.Context, nsTmplSet *toolcha
 		if tierTemplate != nil {
 			newObjs, err = tierTemplate.process(r.Scheme, map[string]string{
 				SpaceName: spacename,
-			}, retainObjectsOfSameGVK(clusterResourceKind.gvk))
+			}, nsTmplSet, retainObjectsOfSameGVK(clusterResourceKind.gvk))
 			if err != nil {
 				return false, r.wrapErrorWithStatusUpdateForClusterResourceFailure(gvkCtx, nsTmplSet, err,
 					"failed to process template for the cluster resources with the name '%s'", nsTmplSet.Spec.ClusterResources.TemplateRef)

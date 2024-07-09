@@ -79,7 +79,7 @@ parameters:
 	// when
 	obj, err := tierTemplate.process(s, map[string]string{
 		SpaceName: "johnsmith",
-	})
+	}, newNSTmplSet("dummy-namespace", "dummy-name", "dummy-tier"))
 
 	// then
 	require.NoError(t, err)

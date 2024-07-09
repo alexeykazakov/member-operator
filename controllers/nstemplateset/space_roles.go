@@ -48,12 +48,12 @@ func (r *spaceRolesManager) ensure(ctx context.Context, nsTmplSet *toolchainv1al
 				return false, err
 			}
 		}
-		lastAppliedSpaceRoleObjs, err := r.getSpaceRolesObjects(lctx, &ns, lastAppliedSpaceRoles)
+		lastAppliedSpaceRoleObjs, err := r.getSpaceRolesObjects(lctx, nsTmplSet, &ns, lastAppliedSpaceRoles)
 		if err != nil {
 			return false, r.wrapErrorWithStatusUpdateForSpaceRolesFailure(lctx, nsTmplSet, err, "failed to retrieve last applied space roles")
 		}
 		// space roles to apply now
-		spaceRoleObjs, err := r.getSpaceRolesObjects(lctx, &ns, nsTmplSet.Spec.SpaceRoles)
+		spaceRoleObjs, err := r.getSpaceRolesObjects(lctx, nsTmplSet, &ns, nsTmplSet.Spec.SpaceRoles)
 		if err != nil {
 			return false, r.wrapErrorWithStatusUpdateForSpaceRolesFailure(lctx, nsTmplSet, err, "failed to retrieve space roles to apply")
 		}
@@ -69,7 +69,7 @@ func (r *spaceRolesManager) ensure(ctx context.Context, nsTmplSet *toolchainv1al
 			return false, r.wrapErrorWithStatusUpdate(lctx, nsTmplSet, r.setStatusNamespaceProvisionFailed, err, "failed to provision namespace '%s' with space roles", ns.Name)
 		}
 
-		if err := deleteObsoleteObjects(lctx, r.Client, lastAppliedSpaceRoleObjs, spaceRoleObjs, nsTmplSet); err != nil {
+		if err := deleteObsoleteObjects(lctx, r.Client, lastAppliedSpaceRoleObjs, spaceRoleObjs); err != nil {
 			return false, r.wrapErrorWithStatusUpdate(lctx, nsTmplSet, r.setStatusUpdateFailed, err, "failed to delete redundant objects in namespace '%s'", ns.Name)
 		}
 
@@ -98,7 +98,7 @@ func (r *spaceRolesManager) ensure(ctx context.Context, nsTmplSet *toolchainv1al
 
 // Get the space role objects from the templates specified in the given `spaceRoles`
 // Returns the objects, or an error if something wrong happened when processing the templates
-func (r *spaceRolesManager) getSpaceRolesObjects(ctx context.Context, ns *corev1.Namespace, spaceRoles []toolchainv1alpha1.NSTemplateSetSpaceRole) ([]runtimeclient.Object, error) {
+func (r *spaceRolesManager) getSpaceRolesObjects(ctx context.Context, nsTmplSet *toolchainv1alpha1.NSTemplateSet, ns *corev1.Namespace, spaceRoles []toolchainv1alpha1.NSTemplateSetSpaceRole) ([]runtimeclient.Object, error) {
 	// store by kind and name
 	spaceRoleObjects := []runtimeclient.Object{}
 	for _, spaceRole := range spaceRoles {
@@ -110,7 +110,7 @@ func (r *spaceRolesManager) getSpaceRolesObjects(ctx context.Context, ns *corev1
 			objs, err := tierTemplate.process(r.Scheme, map[string]string{
 				Namespace: ns.Name,
 				Username:  username,
-			})
+			}, nsTmplSet)
 			if err != nil {
 				return nil, errors.Wrapf(err, "failed to process space roles template '%s' for the user '%s' in namespace '%s'", spaceRole.TemplateRef, username, ns.Name)
 			}

@@ -3,9 +3,9 @@ package nstemplateset
 import (
 	"context"
 	"fmt"
-	rbac "k8s.io/api/rbac/v1"
-	"k8s.io/utils/strings/slices"
 	"sort"
+
+	rbac "k8s.io/api/rbac/v1"
 
 	toolchainv1alpha1 "github.com/codeready-toolchain/api/api/v1alpha1"
 	"github.com/codeready-toolchain/toolchain-common/pkg/configuration"
@@ -51,7 +51,7 @@ func (r *namespacesManager) ensure(ctx context.Context, nsTmplSet *toolchainv1al
 	}
 
 	// find next namespace for provisioning namespace resource
-	tierTemplate, userNamespace, found, err := r.nextNamespaceToProvisionOrUpdate(ctx, tierTemplatesByType, userNamespaces, nsTmplSet)
+	tierTemplate, userNamespace, found, err := r.nextNamespaceToProvisionOrUpdate(ctx, nsTmplSet, tierTemplatesByType, userNamespaces)
 	if err != nil {
 		return false, err
 	}
@@ -85,7 +85,7 @@ func (r *namespacesManager) ensureNamespace(ctx context.Context, nsTmplSet *tool
 		logger.Info("namespace needs to be created")
 	} else {
 		// userNamespace exists, check if the namespace needs to be updated
-		upToDate, err := r.namespaceHasExpectedLabelsFromTemplate(tierTemplate, userNamespace)
+		upToDate, err := r.namespaceHasExpectedLabelsFromTemplate(tierTemplate, userNamespace, nsTmplSet)
 		if err != nil {
 			return r.wrapErrorWithStatusUpdate(ctx, nsTmplSet, r.setStatusNamespaceProvisionFailed, err, "failed to get namespace object from template for namespace type '%s'", tierTemplate.typeName)
 		}
@@ -95,17 +95,17 @@ func (r *namespacesManager) ensureNamespace(ctx context.Context, nsTmplSet *tool
 
 	// create namespace before creating inner resources because creating the namespace may take some time
 	if createOrUpdateNamespace {
-		return r.ensureNamespaceResource(ctx, nsTmplSet, tierTemplate)
+		return r.ensureNamespaceResource(ctx, tierTemplate, nsTmplSet)
 	}
 	return r.ensureInnerNamespaceResources(ctx, nsTmplSet, tierTemplate, userNamespace)
 }
 
 // namespaceHasExpectedLabelsFromTemplate checks if the namespace has the expected labels from the template object
 // note: checks only if the namespace has labels that match the provided template, it does not check whether any labels could have been removed
-func (r *namespacesManager) namespaceHasExpectedLabelsFromTemplate(tierTemplate *tierTemplate, userNamespace *corev1.Namespace) (bool, error) {
+func (r *namespacesManager) namespaceHasExpectedLabelsFromTemplate(tierTemplate *tierTemplate, userNamespace *corev1.Namespace, nsTmplSet *toolchainv1alpha1.NSTemplateSet) (bool, error) {
 	objs, err := tierTemplate.process(r.Scheme, map[string]string{
 		SpaceName: userNamespace.GetLabels()[toolchainv1alpha1.SpaceLabelKey],
-	}, template.RetainNamespaces)
+	}, nsTmplSet, template.RetainNamespaces)
 	if err != nil {
 		return false, err
 	}
@@ -148,12 +148,12 @@ func mapContains(actual, contains map[string]string) bool {
 }
 
 // ensureNamespaceResource ensures that the namespace exists.
-func (r *namespacesManager) ensureNamespaceResource(ctx context.Context, nsTmplSet *toolchainv1alpha1.NSTemplateSet, tierTemplate *tierTemplate) error {
+func (r *namespacesManager) ensureNamespaceResource(ctx context.Context, tierTemplate *tierTemplate, nsTmplSet *toolchainv1alpha1.NSTemplateSet) error {
 	logger := log.FromContext(ctx)
 	logger.Info("creating namespace", "spacename", nsTmplSet.GetName(), "tier", nsTmplSet.Spec.TierName, "type", tierTemplate.typeName)
 	objs, err := tierTemplate.process(r.Scheme, map[string]string{
 		SpaceName: nsTmplSet.GetName(),
-	}, template.RetainNamespaces)
+	}, nsTmplSet, template.RetainNamespaces)
 	if err != nil {
 		return r.wrapErrorWithStatusUpdate(ctx, nsTmplSet, r.setStatusNamespaceProvisionFailed, err, "failed to process template for namespace type '%s'", tierTemplate.typeName)
 	}
@@ -177,62 +177,46 @@ func (r *namespacesManager) ensureNamespaceResource(ctx context.Context, nsTmplS
 	return nil
 }
 
-// ensureInnerNamespaceResources ensure that the namespace has the expected resources.
+// ensureInnerNamespaceResources ensures that the namespace has the expected resources.
 func (r *namespacesManager) ensureInnerNamespaceResources(ctx context.Context, nsTmplSet *toolchainv1alpha1.NSTemplateSet, tierTemplate *tierTemplate, namespace *corev1.Namespace) error {
 	logger := log.FromContext(ctx)
 	logger.Info("ensuring namespace resources", "spacename", nsTmplSet.GetName(), "tier", nsTmplSet.Spec.TierName, "type", tierTemplate.typeName)
 	nsName := namespace.GetName()
 	newObjs, err := tierTemplate.process(r.Scheme, map[string]string{
 		SpaceName: nsTmplSet.GetName(),
-	}, template.RetainAllButNamespaces)
+	}, nsTmplSet, template.RetainAllButNamespaces)
 	if err != nil {
 		return r.wrapErrorWithStatusUpdate(ctx, nsTmplSet, r.setStatusNamespaceProvisionFailed, err, "failed to process template for namespace '%s'", nsName)
 	}
 
-	// Check if we need to delete any obsolete resources
-	// First check if the namespace already has template reference meaning it's not freshly created and has not got any inner resources applied yet
-	currentRef, exists := namespace.Labels[toolchainv1alpha1.TemplateRefLabelKey]
-	if exists {
-		// Now check if there is any featured object to be deleted in case the feature annotation does not present in the NSTemplateSet anymore
-		toDeleteObsoleteFeaturedObjects := false
-		featureStr := nsTmplSet.Annotations[toolchainv1alpha1.FeatureToggleNameAnnotationKey]
-		features := splitCommaSeparatedList(featureStr)
-		for _, obj := range newObjs {
-			objFeature, f := obj.GetAnnotations()[toolchainv1alpha1.FeatureToggleNameAnnotationKey]
-			if f && !slices.Contains(features, objFeature) {
-				// This object represents a disabled feature. We need to delete obsolete objects.
-				toDeleteObsoleteFeaturedObjects = true
-				break
-			}
+	// featuresChanged indicates that the list of last applied features for this namespace doesn't match the current list of enabled features in the NSTemplateSet
+	featuresChanged := nsTmplSet.Annotations[toolchainv1alpha1.FeatureToggleNameAnnotationKey] != namespace.Annotations[LastAppliedFeaturesAnnotationKey]
+
+	if currentRef, exists := namespace.Labels[toolchainv1alpha1.TemplateRefLabelKey]; exists && currentRef != "" && (currentRef != tierTemplate.templateRef || featuresChanged) {
+		logger.Info("checking obsolete namespace resources", "spacename", nsTmplSet.GetName(), "tier", nsTmplSet.Spec.TierName, "type", tierTemplate.typeName)
+		if err := r.setStatusUpdatingIfNotProvisioning(ctx, nsTmplSet); err != nil {
+			return err
 		}
-		// Proceed with deleting potentially obsolete object only if there are obsolete featured objects or the current template reference is not up-to-date
-		if toDeleteObsoleteFeaturedObjects || (currentRef != "" && currentRef != tierTemplate.templateRef) {
-			logger.Info("checking obsolete namespace resources", "spacename", nsTmplSet.GetName(), "tier", nsTmplSet.Spec.TierName, "type", tierTemplate.typeName)
-			if err := r.setStatusUpdatingIfNotProvisioning(ctx, nsTmplSet); err != nil {
-				return err
-			}
-			currentTierTemplate, err := getTierTemplate(ctx, r.GetHostCluster, currentRef)
-			if err != nil {
-				return r.wrapErrorWithStatusUpdate(ctx, nsTmplSet, r.setStatusUpdateFailed, err, "failed to retrieve current TierTemplate with name '%s'", currentRef)
-			}
-			currentObjs, err := currentTierTemplate.process(r.Scheme, map[string]string{
-				SpaceName: nsTmplSet.GetName(),
-			}, template.RetainAllButNamespaces)
-			if err != nil {
-				return r.wrapErrorWithStatusUpdate(ctx, nsTmplSet, r.setStatusUpdateFailed, err, "failed to process template for TierTemplate with name '%s'", currentRef)
-			}
-			if err := deleteObsoleteObjects(ctx, r.Client, currentObjs, newObjs, nsTmplSet); err != nil {
-				return r.wrapErrorWithStatusUpdate(ctx, nsTmplSet, r.setStatusUpdateFailed, err, "failed to delete redundant objects in namespace '%s'", nsName)
-			}
+		currentTierTemplate, err := getTierTemplate(ctx, r.GetHostCluster, currentRef)
+		if err != nil {
+			return r.wrapErrorWithStatusUpdate(ctx, nsTmplSet, r.setStatusUpdateFailed, err, "failed to retrieve current TierTemplate with name '%s'", currentRef)
+		}
+		currentObjs, err := currentTierTemplate.processWithFeatures(r.Scheme, map[string]string{
+			SpaceName: nsTmplSet.GetName(),
+		}, namespace.Annotations[LastAppliedFeaturesAnnotationKey], template.RetainAllButNamespaces)
+		if err != nil {
+			return r.wrapErrorWithStatusUpdate(ctx, nsTmplSet, r.setStatusUpdateFailed, err, "failed to process template for TierTemplate with name '%s'", currentRef)
+		}
+		if err := deleteObsoleteObjects(ctx, r.Client, currentObjs, newObjs); err != nil {
+			return r.wrapErrorWithStatusUpdate(ctx, nsTmplSet, r.setStatusUpdateFailed, err, "failed to delete redundant objects in namespace '%s'", nsName)
 		}
 	}
 
-	objsToCreate := objectsToCreate(newObjs, nsTmplSet)
 	var labels = map[string]string{
 		toolchainv1alpha1.ProviderLabelKey: toolchainv1alpha1.ProviderLabelValue,
 		toolchainv1alpha1.SpaceLabelKey:    nsTmplSet.GetName(),
 	}
-	if _, err = r.ApplyToolchainObjects(ctx, objsToCreate, labels); err != nil {
+	if _, err = r.ApplyToolchainObjects(ctx, newObjs, labels); err != nil {
 		return r.wrapErrorWithStatusUpdate(ctx, nsTmplSet, r.setStatusNamespaceProvisionFailed, err, "failed to provision namespace '%s' with required resources", nsName)
 	}
 
@@ -243,6 +227,19 @@ func (r *namespacesManager) ensureInnerNamespaceResources(ctx context.Context, n
 	// Adding label indicating that the namespace is up-to-date with TierTemplate
 	namespace.Labels[toolchainv1alpha1.TemplateRefLabelKey] = tierTemplate.templateRef
 	namespace.Labels[toolchainv1alpha1.TierLabelKey] = tierTemplate.tierName
+	// Check if we also need to update the last applied features annotations
+	if featuresChanged {
+		if features, f := nsTmplSet.Annotations[toolchainv1alpha1.FeatureToggleNameAnnotationKey]; f {
+			// At least one feature has been enabled or still enabled
+			if namespace.Annotations == nil {
+				namespace.Annotations = make(map[string]string)
+			}
+			namespace.Annotations[LastAppliedFeaturesAnnotationKey] = features
+		} else {
+			// All features are now disabled
+			delete(namespace.Annotations, LastAppliedFeaturesAnnotationKey)
+		}
+	}
 	if err := r.Client.Update(ctx, namespace); err != nil {
 		return r.wrapErrorWithStatusUpdate(ctx, nsTmplSet, r.setStatusNamespaceProvisionFailed, err, "failed to update namespace '%s'", nsName)
 	}
@@ -251,19 +248,6 @@ func (r *namespacesManager) ensureInnerNamespaceResources(ctx context.Context, n
 
 	// TODO add validation for other objects
 	return nil // nothing changed, no error occurred
-}
-
-// Returns only objects which we need to create and filter out any objects for disabled features
-func objectsToCreate(newObjects []runtimeclient.Object, nsTmplSet *toolchainv1alpha1.NSTemplateSet) []runtimeclient.Object {
-	objsToCreate := make([]runtimeclient.Object, 0, len(newObjects))
-	for _, obj := range newObjects {
-		// Check if the new object is associated with a feature toggle.
-		// If yes then ignore this object if it represents a feature or features which are not enabled for this NSTemplateSet
-		if shouldCreate(obj, nsTmplSet) {
-			objsToCreate = append(objsToCreate, obj)
-		}
-	}
-	return objsToCreate
 }
 
 // ensureDeleted ensures that the namespaces that are owned by the space (based on the label) are deleted.
@@ -330,12 +314,12 @@ func fetchNamespacesByOwner(ctx context.Context, cl runtimeclient.Client, spacen
 // nextNamespaceToProvisionOrUpdate returns first namespace (from given namespaces) whose status is active and
 // either revision is not set or revision or tier doesn't equal to the current one.
 // It also returns namespace present in tcNamespaces but not found in given namespaces
-func (r *namespacesManager) nextNamespaceToProvisionOrUpdate(ctx context.Context, tierTemplatesByType []*tierTemplate, namespaces []corev1.Namespace, nsTmplSet *toolchainv1alpha1.NSTemplateSet) (*tierTemplate, *corev1.Namespace, bool, error) {
+func (r *namespacesManager) nextNamespaceToProvisionOrUpdate(ctx context.Context, nsTmplSet *toolchainv1alpha1.NSTemplateSet, tierTemplatesByType []*tierTemplate, namespaces []corev1.Namespace) (*tierTemplate, *corev1.Namespace, bool, error) {
 	for _, nsTemplate := range tierTemplatesByType {
 		namespace, found := findNamespace(namespaces, nsTemplate.typeName)
 		if found {
 			if namespace.Status.Phase == corev1.NamespaceActive {
-				isProvisioned, err := r.isUpToDateAndProvisioned(ctx, &namespace, nsTemplate, nsTmplSet)
+				isProvisioned, err := r.isUpToDateAndProvisioned(ctx, nsTmplSet, &namespace, nsTemplate)
 				if err != nil {
 					return nsTemplate, nil, true, err
 				}
@@ -384,17 +368,20 @@ func getNamespaceName(request reconcile.Request) (string, error) {
 
 // isUpToDateAndProvisioned checks if the obj has the correct Template Reference Label.
 // If so, it processes the tier template to get the expected roles and rolebindings and then checks if they are actually present in the namespace.
-func (r *namespacesManager) isUpToDateAndProvisioned(ctx context.Context, ns *corev1.Namespace, tierTemplate *tierTemplate, nsTmplSet *toolchainv1alpha1.NSTemplateSet) (bool, error) {
+// It also checks if the list of enabled features has changed.
+func (r *namespacesManager) isUpToDateAndProvisioned(ctx context.Context, nsTmplSet *toolchainv1alpha1.NSTemplateSet, ns *corev1.Namespace, tierTemplate *tierTemplate) (bool, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("checking if namespace is up-to-date and provisioned", "namespace_name", ns.Name, "namespace_labels", ns.Labels, "tier_name", tierTemplate.tierName)
-	if ns.GetLabels() != nil &&
+
+	if nsTmplSet.Annotations[toolchainv1alpha1.FeatureToggleNameAnnotationKey] == ns.Annotations[LastAppliedFeaturesAnnotationKey] &&
+		ns.GetLabels() != nil &&
 		ns.GetLabels()[toolchainv1alpha1.TierLabelKey] == tierTemplate.tierName &&
 		ns.GetLabels()[toolchainv1alpha1.TemplateRefLabelKey] == tierTemplate.templateRef {
 
 		newObjs, err := tierTemplate.process(r.Scheme, map[string]string{
 			Username:  ns.GetLabels()[toolchainv1alpha1.SpaceLabelKey],
 			SpaceName: ns.GetLabels()[toolchainv1alpha1.SpaceLabelKey], // both username and space name are required here, since rolebindings are still created with the USERNAME param.
-		}, template.RetainAllButNamespaces)
+		}, nsTmplSet, template.RetainAllButNamespaces)
 		if err != nil {
 			return false, err
 		}
@@ -424,17 +411,14 @@ func (r *namespacesManager) isUpToDateAndProvisioned(ctx context.Context, ns *co
 		}
 
 		// check the names of the roles and roleBindings as well
-		// ignore feature-enabled objects if the corresponding feature is not enabled in the NSTemplateSet
 		for _, role := range processedRoles {
-			// It's NOT up-to-date if NOT found but should be created OR found but should NOT be created.
-			if found, err := r.containsRole(roleList.Items, role, spacename); (found != shouldCreate(role, nsTmplSet)) || err != nil {
+			if found, err := r.containsRole(roleList.Items, role, spacename); !found || err != nil {
 				return false, err
 			}
 		}
 
 		for _, rolebinding := range processedRoleBindings {
-			// It's NOT up-to-date if NOT found but should be created OR found but should NOT be created.
-			if found, err := r.containsRoleBindings(rolebindingList.Items, rolebinding, spacename); (found != shouldCreate(rolebinding, nsTmplSet)) || err != nil {
+			if found, err := r.containsRoleBindings(rolebindingList.Items, rolebinding, spacename); !found || err != nil {
 				return false, err
 			}
 		}

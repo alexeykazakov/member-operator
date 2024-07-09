@@ -82,15 +82,21 @@ const (
 	Namespace        = "NAMESPACE"
 )
 
-// process processes the template inside of the tierTemplate object with the given parameters.
-// Optionally, it also filters the result to return a subset of the template objects.
-func (t *tierTemplate) process(scheme *runtime.Scheme, params map[string]string, filters ...template.FilterFunc) ([]runtimeclient.Object, error) {
+// process processes the template inside the tierTemplate object with the given parameters.
+// Optionally, it also filters the result to return a subset of the template objects
+func (t *tierTemplate) process(scheme *runtime.Scheme, params map[string]string, nsTmplSet *toolchainv1alpha1.NSTemplateSet, filters ...template.FilterFunc) ([]runtimeclient.Object, error) {
+	return t.processWithFeatures(scheme, params, nsTmplSet.Annotations[toolchainv1alpha1.FeatureToggleNameAnnotationKey], filters...)
+}
+
+func (t *tierTemplate) processWithFeatures(scheme *runtime.Scheme, params map[string]string, features string, filters ...template.FilterFunc) ([]runtimeclient.Object, error) {
 	ns, err := configuration.GetWatchNamespace()
 	if err != nil {
 		return nil, err
 	}
 	tmplProcessor := template.NewProcessor(scheme)
 	params[MemberOperatorNS] = ns // add (or enforce)
+
+	filters = append(filters, retainEnabledForFeatures(features))
 	return tmplProcessor.Process(t.template.DeepCopy(), params, filters...)
 }
 
